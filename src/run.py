@@ -8,18 +8,19 @@ from __future__ import annotations
 import argparse
 import json
 
-from . import build_sheet, enrich, scrape_gbp, scrape_outscraper
-from .common import RAW_PATH, load_config
+from . import build_sheet, enrich, scrape_gbp, scrape_outscraper, store
+from .common import DATA, RAW_PATH, load_config
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="DM-first local lead engine")
     p.add_argument("--city", required=True, help="City, e.g. 'Austin'")
     p.add_argument("--state", default=None, help="State, e.g. 'Texas' (US)")
-    p.add_argument("--niche", action="append", default=[],
-                   help="Search term; repeatable, e.g. --niche 'med spa'")
+    p.add_argument("--category", "--niche", action="append", default=[],
+                   dest="niche",
+                   help="Business category / search term; repeatable")
     p.add_argument("--max", type=int, default=None,
-                   help="Max places per niche (overrides config)")
+                   help="Max places per category (overrides config)")
     p.add_argument("--provider", choices=["outscraper", "apify"], default=None,
                    help="Scrape backend (overrides config)")
     p.add_argument("--skip-scrape", action="store_true",
@@ -60,7 +61,17 @@ def main():
     if not places:
         raise SystemExit("No places returned. Check city/niche or the run logs.")
 
-    out = build_sheet.build(places, contacts, cfg)
+    # Cross-run dedup: merge this batch into the per-city master ledger.
+    batch = build_sheet.build_rows(places, contacts, cfg)
+    slug = store.slugify(args.city, args.state)
+    path = store.master_path(slug)
+    master = store.load_master(path)
+    all_rows, added = store.merge(master, batch)
+    store.save_master(path, all_rows)
+    print(f"[run] ledger {slug}: +{len(added)} new "
+          f"(scraped {len(batch)}, master now {len(all_rows)})")
+
+    out = build_sheet.write_workbook(all_rows, cfg, DATA / cfg["output"]["xlsx_name"])
     print(f"[run] done -> {out}")
 
 

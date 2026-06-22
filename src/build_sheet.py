@@ -1,17 +1,22 @@
 """Stage 4/5: merge scrape + enrichment, dedupe, score channel, export xlsx."""
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
+
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .common import DATA, norm_phone, norm_url
+from .common import DATA, norm_phone
 
 COLUMNS = [
     "business_name", "channel", "owner_name", "phone", "email",
     "instagram", "facebook", "website", "address", "city",
-    "category", "rating", "reviews", "google_maps_url",
+    "category", "rating", "reviews", "google_maps_url", "date_added",
 ]
+# Stable cross-run identity. Not shown in the sheet; stored in the ledger.
+KEY_FIELD = "key"
 
 
 def to_row(place: dict, contact: dict, dm_channels: list[str]) -> dict:
@@ -31,8 +36,18 @@ def to_row(place: dict, contact: dict, dm_channels: list[str]) -> dict:
         "rating": place.get("totalScore", ""),
         "reviews": place.get("reviewsCount", ""),
         "google_maps_url": place.get("url", ""),
+        "date_added": date.today().isoformat(),
     }
     row["channel"] = score_lead(row, dm_channels)
+    # Stable identity: Google place id first, then phone, then name+address.
+    pid = str(place.get("place_id") or place.get("placeId")
+              or place.get("cid") or "").strip()
+    row[KEY_FIELD] = (
+        pid
+        or norm_phone(row["phone"])
+        or f"{row['business_name'].lower().strip()}|"
+           f"{row['address'].lower().strip()}"
+    )
     return row
 
 
@@ -59,20 +74,17 @@ def _sort_key(row: dict):
     return -(rating * min(revs, 500))
 
 
-def dedupe(rows: list[dict], on: str) -> list[dict]:
+def build_rows(places: list[dict], contacts: list[dict], cfg: dict) -> list[dict]:
+    """Make scored rows for one scrape batch, deduped within the batch by key."""
+    dm_channels = cfg["dm_channels"]
+    rows = [to_row(p, c, dm_channels) for p, c in zip(places, contacts)]
     seen, out = set(), []
     for r in rows:
-        if on == "phone":
-            key = norm_phone(r["phone"])
-        elif on == "website":
-            key = norm_url(r["website"])
-        else:
-            key = (r["business_name"].lower().strip(),
-                   r["address"].lower().strip())
-        if key and key in seen:
+        k = r.get(KEY_FIELD)
+        if k and k in seen:
             continue
-        if key:
-            seen.add(key)
+        if k:
+            seen.add(k)
         out.append(r)
     return out
 
@@ -98,14 +110,11 @@ def _write_tab(wb: Workbook, title: str, rows: list[dict]):
     ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}1"
 
 
-def build(places: list[dict], contacts: list[dict], cfg: dict) -> str:
-    dm_channels = cfg["dm_channels"]
-    rows = [to_row(p, c, dm_channels) for p, c in zip(places, contacts)]
-    rows = dedupe(rows, cfg["output"]["dedupe_on"])
-    rows.sort(key=_sort_key)
-
-    dm = [r for r in rows if r["channel"] == "DM"]
-    email = [r for r in rows if r["channel"] == "Email"]
+def write_workbook(rows: list[dict], cfg: dict, path=None) -> str:
+    """Write the deliverable xlsx (DM First / Email Second / All) from rows."""
+    rows = sorted(rows, key=_sort_key)
+    dm = [r for r in rows if r.get("channel") == "DM"]
+    email = [r for r in rows if r.get("channel") == "Email"]
 
     wb = Workbook()
     wb.remove(wb.active)  # drop the default empty sheet
@@ -113,8 +122,8 @@ def build(places: list[dict], contacts: list[dict], cfg: dict) -> str:
     _write_tab(wb, "Email Second", email)
     _write_tab(wb, "All", rows)
 
-    out = DATA / cfg["output"]["xlsx_name"]
-    DATA.mkdir(parents=True, exist_ok=True)
+    out = Path(path) if path else (DATA / cfg["output"]["xlsx_name"])
+    out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     print(f"[sheet] {len(rows)} leads -> {out}")
     print(f"[sheet]   DM First: {len(dm)} | Email Second: {len(email)} | "

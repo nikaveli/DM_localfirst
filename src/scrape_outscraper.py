@@ -57,6 +57,7 @@ def _iter_places(res):
 def _to_internal(p: dict):
     """Map one Outscraper place -> (place, contact) in our internal schema."""
     place = {
+        "place_id": p.get("place_id") or p.get("google_id") or p.get("cid"),
         "title": p.get("name", ""),
         "phone": p.get("phone", "") or p.get("phone_1", ""),
         "website": p.get("website", "") or p.get("site", ""),

@@ -22,7 +22,8 @@ enrichment:
 
 output:
   xlsx_name: "leads.xlsx"
-  dedupe_on: "phone"         # phone | website | name_address
+  # Cross-run dedup is automatic via the per-city ledger (leads_db/<city>.csv),
+  # keyed by Google place_id -> phone -> name+address. See src/store.py.
 
 # Channel routing: a lead goes to "DM First" if it has any of these.
 dm_channels: ["instagram", "facebook"]

@@ -79,6 +79,31 @@ Output lands in `data/`:
 - `raw_places.json` — exactly what Apify returned (audit trail)
 - `leads.xlsx` — the deliverable, three tabs
 
+## Run on GitHub (no laptop needed)
+
+One-time setup:
+
+1. Add your key as a repo secret:
+   `Settings -> Secrets and variables -> Actions -> New repository secret`
+   name `OUTSCRAPER_API_KEY`, value = your key.
+   (Or via CLI: `gh secret set OUTSCRAPER_API_KEY --repo nikaveli/DM_localfirst`.)
+
+Each run:
+
+2. `Actions` tab -> **Scrape leads** -> **Run workflow**.
+3. Enter **category**, **city**, **state** (+ optional max) and click Run.
+4. Download the spreadsheet from the run's **Artifacts** (`leads-run-<n>`).
+
+### Cross-run dedup
+
+Each city/state keeps a master ledger at `leads_db/<city-state>.csv`, committed
+back to the repo after every run. The dedup key is Google's stable `place_id`
+(falling back to phone, then name+address). Re-running the **same city** only
+appends businesses not already in that ledger — no duplicate leads — and the
+spreadsheet is rebuilt from the full deduped ledger each time. The
+`date_added` column shows when each lead first appeared, so you can spot what's
+new in a given run.
+
 ## Cost
 
 - **Outscraper** (default): Google Maps ~**$3 / 1,000 places**, plus the

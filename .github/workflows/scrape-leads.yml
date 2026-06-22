@@ -1,0 +1,76 @@
+name: Scrape leads
+
+# Run from the GitHub UI: Actions -> "Scrape leads" -> Run workflow.
+# Enter category, city, state. Re-running the same city only adds NEW
+# businesses (the per-city ledger in leads_db/ is committed back each run).
+on:
+  workflow_dispatch:
+    inputs:
+      category:
+        description: "Business category (e.g. med spa)"
+        required: true
+        type: string
+      city:
+        description: "City (e.g. Austin)"
+        required: true
+        type: string
+      state:
+        description: "State (e.g. Texas) — leave blank if not US"
+        required: false
+        default: ""
+        type: string
+      max:
+        description: "Max places to pull for this category"
+        required: false
+        default: "100"
+        type: string
+
+permissions:
+  contents: write          # so the run can commit the updated ledger
+
+concurrency:
+  # Don't let two runs for the same city race on the ledger commit.
+  group: scrape-${{ inputs.city }}-${{ inputs.state }}
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Scrape + dedup
+        env:
+          OUTSCRAPER_API_KEY: ${{ secrets.OUTSCRAPER_API_KEY }}
+        run: |
+          python -m src.run \
+            --category "${{ inputs.category }}" \
+            --city "${{ inputs.city }}" \
+            --state "${{ inputs.state }}" \
+            --max "${{ inputs.max }}"
+
+      - name: Commit updated ledger
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add leads_db
+          if git diff --cached --quiet; then
+            echo "No new leads — nothing to commit."
+          else
+            git commit -m "leads: ${{ inputs.category }} in ${{ inputs.city }} ${{ inputs.state }}"
+            git push
+          fi
+
+      - name: Upload spreadsheet
+        uses: actions/upload-artifact@v4
+        with:
+          name: leads-run-${{ github.run_number }}
+          path: data/leads.xlsx
+          if-no-files-found: error
