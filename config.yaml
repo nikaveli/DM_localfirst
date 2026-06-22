@@ -1,0 +1,24 @@
+# Defaults for every run. CLI flags override these.
+
+scrape:
+  actor: "compass/crawler-google-places"
+  language: "en"
+  country_code: "us"
+  max_places: 100            # per niche/search term
+  website_filter: "allPlaces"  # allPlaces | withWebsite | withoutWebsite
+  min_stars: ""              # "" | three | threeAndHalf | four ...
+  skip_closed: true
+
+enrichment:
+  use_apify_contacts: false  # true = let Apify crawl emails/socials (+$0.002/place)
+  crawl_pages: ["", "contact", "contact-us", "about", "about-us", "team"]
+  request_timeout: 10
+  max_workers: 8
+  user_agent: "Mozilla/5.0 (compatible; DMLocalFirst/1.0; +local lead research)"
+
+output:
+  xlsx_name: "leads.xlsx"
+  dedupe_on: "phone"         # phone | website | name_address
+
+# Channel routing: a lead goes to "DM First" if it has any of these.
+dm_channels: ["instagram", "facebook"]
