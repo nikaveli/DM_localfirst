@@ -10,12 +10,19 @@ reachable they are, and exports a single spreadsheet split into two queues:
 
 ## Pipeline
 
+Two interchangeable scrape backends (set `scrape.provider` in `config.yaml` or
+`--provider`):
+
+- **outscraper** (default) — scrapes GBP **and** enriches (email, socials,
+  owner name + title) in a single API call. Recommended.
+- **apify** — `compass/crawler-google-places` for the scrape, then a free
+  Python pass crawls each website for email/socials/owner.
+
 ```
-1. SCRAPE   Apify Google Places  ->  name, address, phone, website, rating, category
-2. ENRICH   crawl each website   ->  email, Facebook URL, Instagram URL
-3. ENRICH   site/social (free)   ->  owner name (best-effort, lower fill rate)
-4. SCORE    rank by DM-ability    ->  has IG/FB? -> DM queue. else -> Email queue.
-5. OUTPUT   leads.xlsx            ->  tabs: "DM First" / "Email Second" / "All"
+1. SCRAPE   GBP by city + niche  ->  name, address, phone, website, rating, category
+2. ENRICH   email, FB, IG, owner ->  built-in (outscraper) OR free crawl (apify)
+3. SCORE    rank by DM-ability    ->  has IG/FB? -> DM queue. else -> Email queue.
+4. OUTPUT   leads.xlsx            ->  tabs: "DM First" / "Email Second" / "All"
 ```
 
 ### What comes from where
@@ -28,13 +35,16 @@ reachable they are, and exports a single spreadsheet split into two queues:
 | Website      | GBP (Apify)                         | ~60-80%      |
 | Category     | GBP (Apify)                         | ~100%        |
 | Rating/#revs | GBP (Apify)                         | ~90%         |
-| Email        | website crawl (free enrich)         | ~40-60%      |
-| Facebook     | website crawl (free enrich)         | ~40-60%      |
-| Instagram    | website crawl (free enrich)         | ~30-50%      |
-| Owner name   | site/FB about, heuristic (free)     | ~20-40%      |
+| Email        | enrichment (outscraper / crawl)     | ~40-60%      |
+| Facebook     | enrichment (outscraper / crawl)     | ~40-60%      |
+| Instagram    | enrichment (outscraper / crawl)     | ~30-50%      |
+| Owner name   | outscraper field / heuristic crawl  | ~30-50% / ~20-40% |
 
-> Email, socials, and owner name are **not** in GBP. They are inferred in a
-> second pass. Coverage depends on how many businesses have a working website.
+> Email, socials, and owner name are **not** in GBP. With outscraper they come
+> back as structured fields (`email_1_full_name`/`email_1_title` give the owner);
+> with apify they're inferred by crawling each website. Coverage depends on how
+> many businesses have a working site. Note: enrichment **socials** can be noisy
+> (occasionally mismatched) — sanity-check before DMing; emails are reliable.
 
 ## Setup
 
@@ -42,10 +52,11 @@ reachable they are, and exports a single spreadsheet split into two queues:
 cd ~/DM_localfirst
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # then paste your APIFY_TOKEN into .env
+cp .env.example .env        # then paste your OUTSCRAPER_API_KEY into .env
 ```
 
-Get your token at https://console.apify.com/account/integrations
+Get your key at https://app.outscraper.com/profile (Outscraper, default) or
+https://console.apify.com/account/integrations (Apify, if you switch providers).
 
 ## Run
 
@@ -57,7 +68,10 @@ python -m src.run --city "Austin" --state "Texas" --niche "med spa" --max 100
 python -m src.run --city "Austin" --state "Texas" \
     --niche "med spa" --niche "day spa" --niche "wellness center" --max 75
 
-# Skip the (paid) scrape and re-run enrichment + sheet on the last raw pull
+# Force a provider for one run
+python -m src.run --city "Austin" --niche "med spa" --provider apify
+
+# Re-build the sheet from the last raw pull (no new API spend)
 python -m src.run --city "Austin" --niche "med spa" --skip-scrape
 ```
 
@@ -65,13 +79,13 @@ Output lands in `data/`:
 - `raw_places.json` — exactly what Apify returned (audit trail)
 - `leads.xlsx` — the deliverable, three tabs
 
-## Cost (Apify, free tier rate)
+## Cost
 
-- Base scrape: **$0.004 / place** (~$0.40 per 100 leads).
-- Free Python enrichment: **$0** (just your bandwidth/time).
-- Optional `enrichment.use_apify_contacts: true` in `config.yaml` swaps the
-  Python crawl for Apify's contact enrichment at **+$0.002 / place** — higher
-  fill rate, no local crawling.
+- **Outscraper** (default): Google Maps ~**$3 / 1,000 places**, plus the
+  `domains_service` email/contact enrichment (per Outscraper pricing). One call,
+  owner + email + socials included.
+- **Apify**: base scrape **$0.004 / place** (~$0.40 / 100), free Python
+  enrichment **$0**, or Apify contact enrichment **+$0.002 / place**.
 
 ## Outreach workflow (DM first, email second)
 

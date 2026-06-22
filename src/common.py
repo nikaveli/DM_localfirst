@@ -29,6 +29,15 @@ def apify_token() -> str:
     return token
 
 
+def outscraper_key() -> str:
+    token = os.getenv("OUTSCRAPER_API_KEY")
+    if not token:
+        raise SystemExit(
+            "OUTSCRAPER_API_KEY missing. Copy .env.example to .env and add it."
+        )
+    return token
+
+
 _PHONE_RE = re.compile(r"\D+")
 
 

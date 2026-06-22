@@ -1,10 +1,14 @@
 # Defaults for every run. CLI flags override these.
 
 scrape:
-  actor: "compass/crawler-google-places"
+  provider: "outscraper"     # outscraper | apify
   language: "en"
   country_code: "us"
   max_places: 100            # per niche/search term
+  # --- Outscraper (default) ---
+  outscraper_enrichment: true  # domains_service: email + socials + owner in one call
+  # --- Apify (alternative) ---
+  actor: "compass/crawler-google-places"
   website_filter: "allPlaces"  # allPlaces | withWebsite | withoutWebsite
   min_stars: ""              # "" | three | threeAndHalf | four ...
   skip_closed: true
