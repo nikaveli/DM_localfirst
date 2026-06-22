@@ -9,7 +9,25 @@ import argparse
 import json
 
 from . import build_sheet, enrich, scrape_gbp, scrape_outscraper, store
-from .common import DATA, RAW_PATH, load_config
+from .common import DATA, RAW_PATH, load_config, to_state_code
+
+
+def filter_state(places, contacts, requested_state):
+    """Drop out-of-state spillover. No-op if the state can't be resolved."""
+    want = to_state_code(requested_state)
+    if not want:
+        return places, contacts
+    keep_p, keep_c, dropped = [], [], 0
+    for p, c in zip(places, contacts):
+        pc = to_state_code(p.get("state") or p.get("state_code"))
+        if pc and pc != want:
+            dropped += 1
+            continue
+        keep_p.append(p)
+        keep_c.append(c)
+    if dropped:
+        print(f"[filter] dropped {dropped} out-of-state (kept {len(keep_p)})")
+    return keep_p, keep_c
 
 
 def parse_args():
@@ -61,12 +79,19 @@ def main():
     if not places:
         raise SystemExit("No places returned. Check city/niche or the run logs.")
 
+    # Drop out-of-state spillover (small cities pull in nearby results).
+    places, contacts = filter_state(places, contacts, args.state)
+
     # Cross-run dedup: merge this batch into the per-city master ledger.
     batch = build_sheet.build_rows(places, contacts, cfg)
     slug = store.slugify(args.city, args.state)
     path = store.master_path(slug)
     master = store.load_master(path)
     all_rows, added = store.merge(master, batch)
+    # Backfill DM drafts for any older ledger rows that predate this column.
+    for r in all_rows:
+        if not r.get("dm_draft") and r.get("business_name"):
+            r["dm_draft"] = build_sheet.draft_message(r)
     store.save_master(path, all_rows)
     print(f"[run] ledger {slug}: +{len(added)} new "
           f"(scraped {len(batch)}, master now {len(all_rows)})")

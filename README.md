@@ -104,6 +104,17 @@ spreadsheet is rebuilt from the full deduped ledger each time. The
 `date_added` column shows when each lead first appeared, so you can spot what's
 new in a given run.
 
+### DM drafts & out-of-state filter
+
+- **`dm_draft` column** — every lead gets a short, editable DM opener
+  personalized from owner first name (when known), business name, category, and
+  rating/review count. The "DM First" tab is copy-paste ready; tweak the
+  template in `src/build_sheet.py::draft_message`.
+- **State filter** — small cities sometimes return nearby out-of-state results.
+  When you pass a state, anything whose Google address resolves to a different
+  state is dropped before it enters the ledger. Accepts `Colorado`, `CO`, or
+  common shorthand like `colo`.
+
 ## Cost
 
 - **Outscraper** (default): Google Maps ~**$3 / 1,000 places**, plus the

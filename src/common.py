@@ -52,3 +52,37 @@ def norm_url(url: str | None) -> str:
     if not url:
         return ""
     return url.strip().lower().rstrip("/")
+
+
+_NAME2CODE = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",
+    "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE",
+    "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ",
+    "new mexico": "NM", "new york": "NY", "north carolina": "NC",
+    "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR",
+    "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA",
+    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+    "district of columbia": "DC",
+}
+_CODES = set(_NAME2CODE.values())
+# common shorthand the user might type
+_ALIASES = {"colo": "CO", "calif": "CA", "cali": "CA", "mass": "MA",
+            "penn": "PA", "wash": "WA", "tex": "TX", "fla": "FL"}
+
+
+def to_state_code(s: str | None) -> str:
+    """Normalize 'Colorado' / 'CO' / 'colo' -> 'CO'. '' if unresolvable."""
+    if not s:
+        return ""
+    s = s.strip()
+    if len(s) == 2 and s.upper() in _CODES:
+        return s.upper()
+    low = s.lower()
+    return _NAME2CODE.get(low) or _ALIASES.get(low, "")

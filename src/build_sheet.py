@@ -11,7 +11,7 @@ from openpyxl.utils import get_column_letter
 from .common import DATA, norm_phone
 
 COLUMNS = [
-    "business_name", "channel", "owner_name", "phone", "email",
+    "business_name", "channel", "dm_draft", "owner_name", "phone", "email",
     "instagram", "facebook", "website", "address", "city",
     "category", "rating", "reviews", "google_maps_url", "date_added",
 ]
@@ -39,6 +39,7 @@ def to_row(place: dict, contact: dict, dm_channels: list[str]) -> dict:
         "date_added": date.today().isoformat(),
     }
     row["channel"] = score_lead(row, dm_channels)
+    row["dm_draft"] = draft_message(row)
     # Stable identity: Google place id first, then phone, then name+address.
     pid = str(place.get("place_id") or place.get("placeId")
               or place.get("cid") or "").strip()
@@ -49,6 +50,44 @@ def to_row(place: dict, contact: dict, dm_channels: list[str]) -> dict:
            f"{row['address'].lower().strip()}"
     )
     return row
+
+
+def _plural(category: str) -> str:
+    c = (category or "business").lower()
+    if c.endswith(("s", "x", "z", "ch", "sh")):
+        return c + "es"
+    return c + "s"
+
+
+def draft_message(row: dict) -> str:
+    """A short, editable DM opener personalized from name, category, rating."""
+    owner = (row.get("owner_name") or "").split(" (")[0].strip()
+    first = owner.split()[0] if owner else ""
+    greet = f"Hi {first}" if first else "Hi there"
+    biz = (row.get("business_name") or "").strip()
+    city = (row.get("city") or "").strip()
+    cat_plural = _plural(row.get("category") or "local business")
+    try:
+        rating = float(row.get("rating") or 0)
+    except (TypeError, ValueError):
+        rating = 0.0
+    try:
+        revs = int(row.get("reviews") or 0)
+    except (TypeError, ValueError):
+        revs = 0
+
+    if rating >= 4.5 and revs >= 10:
+        hook = (f"{biz} stood out — {rating:g}★ across {revs} reviews "
+                f"is no accident.")
+    elif biz:
+        loc = f" in {city}" if city else ""
+        hook = f"I came across {biz}{loc} and loved what you're doing."
+    else:
+        hook = "I came across your page and loved what you're doing."
+
+    return (f"{greet}! {hook} I help {cat_plural} turn that reputation into "
+            f"more booked appointments without leaning harder on ads — mind if "
+            f"I share a quick idea here?")
 
 
 def score_lead(row: dict, dm_channels: list[str]) -> str:
@@ -100,8 +139,10 @@ def _write_tab(wb: Workbook, title: str, rows: list[dict]):
         cell.alignment = Alignment(horizontal="left")
     for r, row in enumerate(rows, 2):
         for c, col in enumerate(COLUMNS, 1):
-            ws.cell(r, c, row.get(col, ""))
-    widths = {"business_name": 28, "email": 26, "website": 30,
+            cell = ws.cell(r, c, row.get(col, ""))
+            if col == "dm_draft":
+                cell.alignment = Alignment(wrap_text=True, vertical="top")
+    widths = {"business_name": 28, "dm_draft": 60, "email": 26, "website": 30,
               "instagram": 26, "facebook": 26, "address": 32,
               "google_maps_url": 22}
     for c, col in enumerate(COLUMNS, 1):
