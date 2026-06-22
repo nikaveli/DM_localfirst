@@ -20,7 +20,7 @@ from .common import RAW_PATH, load_config, outscraper_key
 # returns these (e.g. instagram.com/reel). Drop them.
 IG_JUNK = {"reel", "reels", "p", "explore", "accounts", "stories", "tv", "about"}
 FB_JUNK = {"sharer", "dialog", "plugins", "tr", "groups", "watch", "events",
-           "pages", "reel", "story.php"}
+           "pages", "people", "profile.php", "reel", "story.php"}
 
 
 def _norm_social(val, base: str, junk: set) -> str:
