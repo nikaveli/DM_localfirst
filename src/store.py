@@ -12,14 +12,17 @@ import re
 from pathlib import Path
 
 from .build_sheet import COLUMNS, KEY_FIELD
-from .common import ROOT
+from .common import ROOT, to_state_code
 
 LEADS_DB = ROOT / "leads_db"
 FIELDS = COLUMNS + [KEY_FIELD]
 
 
 def slugify(city: str, state: str | None) -> str:
-    raw = f"{city}-{state}" if state else (city or "")
+    # Normalize the state ("Colorado"/"CO"/"colo" -> "co") so the same city
+    # always maps to ONE ledger regardless of how the state was typed.
+    st = to_state_code(state) or (state or "")
+    raw = f"{city}-{st}" if st else (city or "")
     slug = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-")
     return slug or "leads"
 
