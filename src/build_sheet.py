@@ -11,7 +11,8 @@ from openpyxl.utils import get_column_letter
 from .common import DATA, norm_phone
 
 COLUMNS = [
-    "business_name", "channel", "dm_draft", "owner_name", "phone", "email",
+    "business_name", "channel", "opportunity", "gaps", "dm_draft",
+    "status", "notes", "owner_name", "phone", "email",
     "instagram", "facebook", "website", "address", "city",
     "category", "rating", "reviews", "google_maps_url", "date_added",
 ]
@@ -39,7 +40,10 @@ def to_row(place: dict, contact: dict, dm_channels: list[str]) -> dict:
         "date_added": date.today().isoformat(),
     }
     row["channel"] = score_lead(row, dm_channels)
+    row["opportunity"], row["gaps"] = compute_gaps(row, place)
     row["dm_draft"] = draft_message(row)
+    row["status"] = ""   # outreach tracking, filled in by hand
+    row["notes"] = ""
     # Stable identity: Google place id first, then phone, then name+address.
     pid = str(place.get("place_id") or place.get("placeId")
               or place.get("cid") or "").strip()
@@ -50,6 +54,38 @@ def to_row(place: dict, contact: dict, dm_channels: list[str]) -> dict:
            f"{row['address'].lower().strip()}"
     )
     return row
+
+
+def compute_gaps(row: dict, place: dict | None = None) -> tuple[int, str]:
+    """Score how much marketing help a business likely needs (0-10).
+
+    High score = strong prospect for local-marketing services. Signals that
+    only exist in the raw scrape (claimed profile, ad pixels) are skipped
+    when unavailable, so this also works when re-scoring ledger rows.
+    """
+    place = place or {}
+    gaps, score = [], 0
+    if not row.get("website"):
+        gaps.append("no website")
+        score += 3
+    if place.get("claimed") is False:
+        gaps.append("unclaimed GBP")
+        score += 3
+    if not row.get("instagram"):
+        gaps.append("no Instagram")
+        score += 2
+    if row.get("website") and (place.get("has_fb_pixel") is False
+                               and place.get("has_google_tag") is False):
+        gaps.append("no ad tracking")
+        score += 1
+    try:
+        revs = int(row.get("reviews") or 0)
+    except (TypeError, ValueError):
+        revs = 0
+    if revs < 50:
+        gaps.append("few reviews")
+        score += 1
+    return score, "; ".join(gaps)
 
 
 def _plural(category: str) -> str:
@@ -76,18 +112,36 @@ def draft_message(row: dict) -> str:
     except (TypeError, ValueError):
         revs = 0
 
-    if rating >= 4.5 and revs >= 10:
+    loc = f" in {city}" if city else ""
+    gaps = row.get("gaps") or ""
+
+    # Pitch the gap, not a generic line. Priority: website > GBP > social.
+    if "no website" in gaps:
+        hook = (f"I came across {biz}{loc} — great reviews, but I noticed "
+                f"people can't book or browse you online yet.")
+        pitch = (f"I build simple sites for {cat_plural} that turn Google "
+                 f"searches into booked appointments — mind if I share a "
+                 f"quick idea here?")
+    elif "unclaimed GBP" in gaps:
+        hook = (f"I found {biz}{loc} on Google and noticed the profile "
+                f"looks unclaimed — you're likely losing calls to "
+                f"competitors who show up polished.")
+        pitch = ("I help local businesses take over and optimize their "
+                 "Google listing — takes a week, mind if I share how?")
+    elif rating >= 4.5 and revs >= 10:
         hook = (f"{biz} stood out — {rating:g}★ across {revs} reviews "
                 f"is no accident.")
-    elif biz:
-        loc = f" in {city}" if city else ""
-        hook = f"I came across {biz}{loc} and loved what you're doing."
+        pitch = (f"I help {cat_plural} turn that reputation into more "
+                 f"booked appointments without leaning harder on ads — "
+                 f"mind if I share a quick idea here?")
     else:
-        hook = "I came across your page and loved what you're doing."
+        hook = (f"I came across {biz}{loc} and loved what you're doing."
+                if biz else
+                "I came across your page and loved what you're doing.")
+        pitch = (f"I help {cat_plural} get found by more local customers "
+                 f"on Google — mind if I share a quick idea here?")
 
-    return (f"{greet}! {hook} I help {cat_plural} turn that reputation into "
-            f"more booked appointments without leaning harder on ads — mind if "
-            f"I share a quick idea here?")
+    return f"{greet}! {hook} {pitch}"
 
 
 def score_lead(row: dict, dm_channels: list[str]) -> str:
@@ -101,7 +155,15 @@ def score_lead(row: dict, dm_channels: list[str]) -> str:
 
 
 def _sort_key(row: dict):
-    """Rank by social proof: rating x log-ish review weight."""
+    """Sellability first: opportunity (gaps) desc, then social proof desc.
+
+    A business with fixable gaps is a better prospect than one that's
+    already winning; among equals, the more-established one goes first.
+    """
+    try:
+        opp = int(row.get("opportunity") or 0)
+    except (TypeError, ValueError):
+        opp = 0
     try:
         rating = float(row.get("rating") or 0)
     except (TypeError, ValueError):
@@ -110,7 +172,7 @@ def _sort_key(row: dict):
         revs = int(row.get("reviews") or 0)
     except (TypeError, ValueError):
         revs = 0
-    return -(rating * min(revs, 500))
+    return (-opp, -(rating * min(revs, 500)))
 
 
 def build_rows(places: list[dict], contacts: list[dict], cfg: dict) -> list[dict]:
@@ -142,17 +204,22 @@ def _write_tab(wb: Workbook, title: str, rows: list[dict]):
             cell = ws.cell(r, c, row.get(col, ""))
             if col == "dm_draft":
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
-    widths = {"business_name": 28, "dm_draft": 60, "email": 26, "website": 30,
+    widths = {"business_name": 28, "gaps": 30, "dm_draft": 60, "status": 12,
+              "notes": 24, "email": 26, "website": 30,
               "instagram": 26, "facebook": 26, "address": 32,
-              "google_maps_url": 22}
+              "google_maps_url": 22, "opportunity": 11}
     for c, col in enumerate(COLUMNS, 1):
         ws.column_dimensions[get_column_letter(c)].width = widths.get(col, 14)
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}1"
 
 
-def write_workbook(rows: list[dict], cfg: dict, path=None) -> str:
-    """Write the deliverable xlsx (DM First / Email Second / All) from rows."""
+def write_workbook(rows: list[dict], cfg: dict, path=None,
+                   new_keys: set | None = None) -> str:
+    """Write the deliverable xlsx (DM First / Email Second / All) from rows.
+
+    If new_keys is given, adds a "New This Run" tab with just those leads.
+    """
     rows = sorted(rows, key=_sort_key)
     dm = [r for r in rows if r.get("channel") == "DM"]
     email = [r for r in rows if r.get("channel") == "Email"]
@@ -161,6 +228,9 @@ def write_workbook(rows: list[dict], cfg: dict, path=None) -> str:
     wb.remove(wb.active)  # drop the default empty sheet
     _write_tab(wb, "DM First", dm)
     _write_tab(wb, "Email Second", email)
+    if new_keys is not None:
+        fresh = [r for r in rows if r.get(KEY_FIELD) in new_keys]
+        _write_tab(wb, "New This Run", fresh)
     _write_tab(wb, "All", rows)
 
     out = Path(path) if path else (DATA / cfg["output"]["xlsx_name"])

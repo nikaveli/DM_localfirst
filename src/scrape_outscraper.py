@@ -68,6 +68,11 @@ def _to_internal(p: dict):
         "totalScore": p.get("rating", ""),
         "reviewsCount": p.get("reviews", ""),
         "url": p.get("location_link", ""),
+        # Opportunity signals (used for gap scoring; may be None/absent).
+        "claimed": p.get("verified"),
+        "has_fb_pixel": p.get("website_has_fb_pixel"),
+        "has_google_tag": p.get("website_has_google_tag"),
+        "photos_count": p.get("photos_count"),
     }
     owner = (p.get("email_1_full_name") or "").strip()
     title = (p.get("email_1_title") or "").strip()

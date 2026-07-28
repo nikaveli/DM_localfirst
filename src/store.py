@@ -35,18 +35,34 @@ def load_master(path: Path) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
+# Fields the user (or history) owns — never overwritten by a re-scrape.
+PRESERVE = ("date_added", "status", "notes")
+
+
 def merge(master: list[dict], new_rows: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Return (all_rows, added_rows). Existing keys win; new keys are appended."""
-    existing = {r.get(KEY_FIELD) for r in master if r.get(KEY_FIELD)}
-    added = []
-    for r in new_rows:
-        k = r.get(KEY_FIELD)
-        if k and k in existing:
-            continue
-        if k:
-            existing.add(k)
-        added.append(r)
-    return master + added, added
+    """Return (all_rows, added_rows).
+
+    New keys are appended. Keys already in the ledger get their data fields
+    refreshed from the new scrape (fresher contacts/gaps), while date_added,
+    status, and notes are preserved — so re-runs enrich instead of duplicate,
+    and never clobber your outreach tracking.
+    """
+    fresh = {r[KEY_FIELD]: r for r in new_rows if r.get(KEY_FIELD)}
+    merged, added_keys = [], set(fresh)
+    for old in master:
+        k = old.get(KEY_FIELD)
+        if k and k in fresh:
+            added_keys.discard(k)
+            new = dict(fresh[k])
+            for f in PRESERVE:
+                if old.get(f):
+                    new[f] = old[f]
+            merged.append(new)
+        else:
+            merged.append(old)
+    added = [r for r in new_rows if r.get(KEY_FIELD) in added_keys
+             or not r.get(KEY_FIELD)]
+    return merged + added, added
 
 
 def save_master(path: Path, rows: list[dict]) -> None:

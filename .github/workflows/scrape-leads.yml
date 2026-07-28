@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       category:
-        description: "Business category (e.g. med spa)"
+        description: "Business category — comma-separate for several (e.g. med spa, day spa)"
         required: true
         type: string
       city:

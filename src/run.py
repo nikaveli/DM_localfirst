@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 
 from . import build_sheet, enrich, scrape_gbp, scrape_outscraper, store
 from .common import DATA, RAW_PATH, load_config, to_state_code
@@ -51,8 +52,11 @@ def main():
     args = parse_args()
     cfg = load_config()
     provider = args.provider or cfg["scrape"]["provider"]
-    niches = args.niche or ["med spa", "day spa", "wellness center"]
-    print(f"[run] provider={provider} city={args.city!r}")
+    # Each --category may itself be comma-separated ("med spa, day spa").
+    raw_niches = args.niche or ["med spa", "day spa", "wellness center"]
+    niches = [n.strip() for grp in raw_niches for n in grp.split(",")
+              if n.strip()]
+    print(f"[run] provider={provider} city={args.city!r} niches={niches}")
 
     if args.skip_scrape:
         if not RAW_PATH.exists():
@@ -88,16 +92,53 @@ def main():
     path = store.master_path(slug)
     master = store.load_master(path)
     all_rows, added = store.merge(master, batch)
-    # Backfill DM drafts for any older ledger rows that predate this column.
+    # Backfill older ledger rows that predate the gap/draft columns.
     for r in all_rows:
-        if not r.get("dm_draft") and r.get("business_name"):
+        if not r.get("business_name"):
+            continue
+        if not r.get("gaps") and not r.get("opportunity"):
+            r["opportunity"], r["gaps"] = build_sheet.compute_gaps(r)
+            r["dm_draft"] = build_sheet.draft_message(r)
+        elif not r.get("dm_draft"):
             r["dm_draft"] = build_sheet.draft_message(r)
     store.save_master(path, all_rows)
     print(f"[run] ledger {slug}: +{len(added)} new "
           f"(scraped {len(batch)}, master now {len(all_rows)})")
 
-    out = build_sheet.write_workbook(all_rows, cfg, DATA / cfg["output"]["xlsx_name"])
+    new_keys = {r.get(build_sheet.KEY_FIELD) for r in added}
+    out = build_sheet.write_workbook(
+        all_rows, cfg, DATA / cfg["output"]["xlsx_name"], new_keys=new_keys)
     print(f"[run] done -> {out}")
+    write_step_summary(args, niches, all_rows, added)
+
+
+def write_step_summary(args, niches, all_rows, added):
+    """Post results to the GitHub Actions run page (no download needed)."""
+    summary_path = os.getenv("GITHUB_STEP_SUMMARY")
+    if not summary_path:
+        return
+    dm = sum(1 for r in all_rows if r.get("channel") == "DM")
+    em = sum(1 for r in all_rows if r.get("channel") == "Email")
+    top = sorted(added or all_rows, key=build_sheet._sort_key)[:5]
+    lines = [
+        f"## Leads: {', '.join(niches)} — {args.city}, {args.state or ''}",
+        "",
+        f"| New this run | Total in ledger | DM First | Email Second |",
+        f"|---|---|---|---|",
+        f"| **{len(added)}** | {len(all_rows)} | {dm} | {em} |",
+        "",
+        f"### Top {'new ' if added else ''}prospects (by opportunity)",
+        "| Business | Opp | Gaps | Rating |",
+        "|---|---|---|---|",
+    ]
+    for r in top:
+        lines.append(
+            f"| {r.get('business_name','')} | {r.get('opportunity','')} "
+            f"| {r.get('gaps','')} | {r.get('rating','')}★ "
+            f"({r.get('reviews','')}) |")
+    lines.append("\nSpreadsheet: download the `leads-run-*` artifact below.")
+    with open(summary_path, "a", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
 
 
 if __name__ == "__main__":
