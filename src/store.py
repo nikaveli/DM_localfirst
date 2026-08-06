@@ -38,18 +38,44 @@ def load_master(path: Path) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
+def keys_in_other_ledgers(current: Path) -> set:
+    """Every business key already captured in a DIFFERENT city's ledger.
+
+    Neighboring cities overlap (an Aurora proximity search reaches Centennial),
+    so without this the same business lands in two ledgers and gets contacted
+    twice. Whichever city captured it first keeps it.
+    """
+    keys = set()
+    if not LEADS_DB.exists():
+        return keys
+    for p in LEADS_DB.glob("*.csv"):
+        if p.resolve() == current.resolve():
+            continue
+        for r in load_master(p):
+            if r.get(KEY_FIELD):
+                keys.add(r[KEY_FIELD])
+    return keys
+
+
 # Fields the user (or history) owns — never overwritten by a re-scrape.
 PRESERVE = ("date_added", "status", "notes")
 
 
-def merge(master: list[dict], new_rows: list[dict]) -> tuple[list[dict], list[dict]]:
+def merge(master: list[dict], new_rows: list[dict],
+          exclude: set | None = None) -> tuple[list[dict], list[dict]]:
     """Return (all_rows, added_rows).
 
     New keys are appended. Keys already in the ledger get their data fields
     refreshed from the new scrape (fresher contacts/gaps), while date_added,
     status, and notes are preserved — so re-runs enrich instead of duplicate,
-    and never clobber your outreach tracking.
+    and never clobber your outreach tracking. Keys in `exclude` (already owned
+    by another city's ledger) are skipped entirely.
     """
+    if exclude:
+        own = {r.get(KEY_FIELD) for r in master}
+        new_rows = [r for r in new_rows
+                    if r.get(KEY_FIELD) not in exclude
+                    or r.get(KEY_FIELD) in own]
     fresh = {r[KEY_FIELD]: r for r in new_rows if r.get(KEY_FIELD)}
     merged, added_keys = [], set(fresh)
     for old in master:

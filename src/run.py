@@ -91,7 +91,14 @@ def main():
     slug = store.slugify(args.city, args.state)
     path = store.master_path(slug)
     master = store.load_master(path)
-    all_rows, added = store.merge(master, batch)
+    elsewhere = store.keys_in_other_ledgers(path)
+    own_keys = {r.get(build_sheet.KEY_FIELD) for r in master}
+    skipped = sum(1 for r in batch
+                  if r.get(build_sheet.KEY_FIELD) in elsewhere
+                  and r.get(build_sheet.KEY_FIELD) not in own_keys)
+    all_rows, added = store.merge(master, batch, exclude=elsewhere)
+    if skipped:
+        print(f"[dedup] skipped {skipped} already owned by another city ledger")
     # Backfill ledger rows that predate newer columns (tier, status, drafts).
     for r in all_rows:
         if not r.get("business_name"):
