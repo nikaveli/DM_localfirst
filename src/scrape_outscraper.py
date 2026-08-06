@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 from outscraper import ApiClient
 
-from .common import RAW_PATH, load_config, outscraper_key
+from .common import RAW_PATH, load_config, lookup_zips, outscraper_key
 
 # Generic platform paths that are NOT real profiles — Outscraper sometimes
 # returns these (e.g. instagram.com/reel). Drop them.
@@ -88,17 +88,37 @@ def _to_internal(p: dict):
     return place, contact
 
 
+def build_queries(niches, city, state, cfg) -> tuple[list[str], int]:
+    """Queries for the scrape, plus the zip count used.
+
+    Proximity mode (default): one query per zip code, "<niche> near <zip>".
+    A single city-wide search returns Google's *ranked* list, which is biased
+    toward already-visible businesses; searching by zip returns results by
+    physical proximity and surfaces the invisible ones — the best prospects.
+    Falls back to a plain city search if zips can't be looked up.
+    """
+    if cfg["scrape"].get("proximity_search", True):
+        zips = lookup_zips(city, state)
+        if zips:
+            cap = cfg["scrape"].get("max_zips", 20)
+            zips = zips[:cap]
+            return [f"{n} near {z}" for n in niches for z in zips], len(zips)
+        print("[scrape] zip lookup failed — falling back to city search")
+    loc = ", ".join(x for x in [city, state, "USA"] if x)
+    return [f"{n}, {loc}" for n in niches], 0
+
+
 def run(niches, city, state, cfg, max_places=None):
     """Return (places, contacts) already normalized + enriched."""
     client = ApiClient(outscraper_key())
     s = cfg["scrape"]
     limit = max_places or s["max_places"]
-    loc = ", ".join(x for x in [city, state, "USA"] if x)
-    queries = [f"{n}, {loc}" for n in niches]
+    queries, n_zips = build_queries(niches, city, state, cfg)
     enrichment = ["domains_service"] if s.get("outscraper_enrichment", True) else None
 
-    print(f"[scrape] outscraper queries={queries} limit={limit}/query "
-          f"enrichment={enrichment}")
+    mode = f"proximity ({n_zips} zips)" if n_zips else "city-wide"
+    print(f"[scrape] outscraper {mode}: {len(queries)} queries "
+          f"limit={limit}/query enrichment={enrichment}")
     res = client.google_maps_search(
         queries,
         limit=limit,
@@ -109,15 +129,21 @@ def run(niches, city, state, cfg, max_places=None):
     )
 
     # Response shape varies: sometimes list-of-lists (one list per query),
-    # sometimes a flat list of place dicts. Handle both.
-    raw, places, contacts = [], [], []
+    # sometimes a flat list of place dicts. Handle both. The same business
+    # appears across neighboring zips, so dedupe by place_id here.
+    raw, places, contacts, seen = [], [], [], set()
     for p in _iter_places(res):
+        pid = p.get("place_id") or p.get("google_id") or p.get("cid")
+        if pid and pid in seen:
+            continue
+        if pid:
+            seen.add(pid)
         raw.append(p)
         place, contact = _to_internal(p)
         places.append(place)
         contacts.append(contact)
 
-    print(f"[scrape] {len(places)} places returned")
+    print(f"[scrape] {len(places)} unique places returned")
     RAW_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(RAW_PATH, "w", encoding="utf-8") as fh:
         json.dump(raw, fh, indent=2, ensure_ascii=False)

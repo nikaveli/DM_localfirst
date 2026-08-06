@@ -104,6 +104,39 @@ spreadsheet is rebuilt from the full deduped ledger each time. The
 `date_added` column shows when each lead first appeared, so you can spot what's
 new in a given run.
 
+### Proximity search (why you get 3-5x more leads)
+
+A single `"med spa, Aurora, CO"` search returns Google's **ranked** list —
+biased toward businesses that are already visible and well-optimized, i.e. the
+ones who need you least. With `proximity_search: true` (default) the scrape
+instead runs one query per **zip code** (`"med spa near 80010"`, …), which
+returns results by physical proximity and surfaces the invisible businesses.
+Zips are looked up free via Zippopotam (no key); results are deduped by
+`place_id`. Falls back to a city-wide search if the lookup fails.
+
+### Website status & pitch tiers
+
+`website_status` is the core buying signal — a Facebook page or a Vagaro link
+is **not** a website:
+
+| status | meaning | pitch |
+|---|---|---|
+| `none` | no website at all | "You're invisible everywhere but Maps." |
+| `social-only` | FB/IG/Linktree | "A Facebook page isn't a website." |
+| `booking-only` | Vagaro/Square/Booksy/DoorDash | Easiest yes — they already pay for web presence |
+| `real` | an owned domain | redesign candidate at best |
+
+`tier` ranks sellability, and the sheet sorts **A → D**:
+
+- **Tier A** — no real site + 30+ reviews. Proven, busy, invisible. Hottest.
+- **Tier B** — no real site, 10-29 reviews.
+- **Tier C** — real site + 30+ reviews. Redesign candidates.
+- **Tier D** — little proof to build from. Deprioritize.
+
+> Vertical matters a lot. In real Aurora data, med spas were 6% no-real-site
+> (saturated), while food trucks/restaurants were 57-100% — and produced every
+> Tier A lead. Target food, trades, and services over marketing-savvy verticals.
+
 ### DM drafts & out-of-state filter
 
 - **`dm_draft` column** — every lead gets a short, editable DM opener

@@ -77,6 +77,29 @@ _ALIASES = {"colo": "CO", "calif": "CA", "cali": "CA", "mass": "MA",
             "penn": "PA", "wash": "WA", "tex": "TX", "fla": "FL"}
 
 
+def lookup_zips(city: str, state: str | None, timeout: int = 15) -> list[str]:
+    """All USPS zip codes for a city, via the free Zippopotam API (no key).
+
+    Used for proximity search: one query per zip surfaces businesses that a
+    single city-wide search never ranks. Returns [] if lookup fails, so the
+    caller can fall back to a plain city search.
+    """
+    import requests
+
+    code = to_state_code(state)
+    if not city or not code:
+        return []
+    url = f"http://api.zippopotam.us/us/{code.lower()}/{city.strip().lower()}"
+    try:
+        r = requests.get(url, timeout=timeout)
+        if r.status_code != 200:
+            return []
+        places = r.json().get("places", [])
+        return sorted({p["post code"] for p in places if p.get("post code")})
+    except Exception:
+        return []
+
+
 def to_state_code(s: str | None) -> str:
     """Normalize 'Colorado' / 'CO' / 'colo' -> 'CO'. '' if unresolvable."""
     if not s:

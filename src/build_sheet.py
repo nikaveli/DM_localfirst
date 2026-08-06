@@ -1,6 +1,7 @@
 """Stage 4/5: merge scrape + enrichment, dedupe, score channel, export xlsx."""
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 
@@ -11,9 +12,9 @@ from openpyxl.utils import get_column_letter
 from .common import DATA, norm_phone
 
 COLUMNS = [
-    "business_name", "channel", "opportunity", "gaps", "dm_draft",
+    "business_name", "tier", "channel", "opportunity", "gaps", "dm_draft",
     "status", "notes", "owner_name", "phone", "email",
-    "instagram", "facebook", "website", "address", "city",
+    "instagram", "facebook", "website", "website_status", "address", "city",
     "category", "rating", "reviews", "google_maps_url", "date_added",
 ]
 # Stable cross-run identity. Not shown in the sheet; stored in the ledger.
@@ -40,6 +41,8 @@ def to_row(place: dict, contact: dict, dm_channels: list[str]) -> dict:
         "date_added": date.today().isoformat(),
     }
     row["channel"] = score_lead(row, dm_channels)
+    row["website_status"] = website_status(row["website"])
+    row["tier"] = pitch_tier(row["website_status"], as_int(row.get("reviews")))
     row["opportunity"], row["gaps"] = compute_gaps(row, place)
     row["dm_draft"] = draft_message(row)
     row["status"] = ""   # outreach tracking, filled in by hand
@@ -56,6 +59,48 @@ def to_row(place: dict, contact: dict, dm_channels: list[str]) -> dict:
     return row
 
 
+SOCIAL_DOMAINS = ('facebook.com', 'm.facebook.com', 'fb.com', 'instagram.com',
+                  'linktr.ee', 'linktree.com', 'tiktok.com', 'yelp.com',
+                  'twitter.com', 'x.com', 'threads.net', 'youtube.com',
+                  'bio.site', 'beacons.ai', 'taplink.cc', 'lnk.bio')
+BOOKING_DOMAINS = ('vagaro.com', 'squareup.com', 'square.site', 'booksy.com',
+                   'glossgenius.com', 'schedulicity.com', 'calendly.com',
+                   'styleseat.com', 'mindbodyonline.com', 'mindbody.io',
+                   'fresha.com', 'setmore.com', 'acuityscheduling.com', 'as.me',
+                   'janeapp.com', 'gymdesk.com', 'zenoti.com', 'boulevard.io',
+                   'doordash.com', 'ubereats.com', 'grubhub.com', 'toasttab.com',
+                   'clover.com', 'chownow.com', 'slicelife.com', 'menufy.com',
+                   'godaddysites.com', 'business.site')
+
+
+def website_status(url: str | None) -> str:
+    """none | social-only | booking-only | real — the core buying signal.
+
+    A Facebook page or a Vagaro booking link is not a website. Owners with a
+    booking-only link already pay for web presence, so they know they need it.
+    """
+    if not url:
+        return "none"
+    host = re.sub(r"^https?://(www\.)?", "", str(url).lower()).split("/")[0]
+    if any(host == d or host.endswith("." + d) for d in SOCIAL_DOMAINS):
+        return "social-only"
+    if any(host == d or host.endswith("." + d) for d in BOOKING_DOMAINS):
+        return "booking-only"
+    return "real"
+
+
+def pitch_tier(status: str, reviews: int) -> str:
+    """A = proven + invisible (hottest). D = little proof to build from."""
+    no_real = status in ("none", "social-only", "booking-only")
+    if no_real and reviews >= 30:
+        return "A"
+    if no_real and reviews >= 10:
+        return "B"
+    if status == "real" and reviews >= 30:
+        return "C"
+    return "D"
+
+
 def compute_gaps(row: dict, place: dict | None = None) -> tuple[int, str]:
     """Score how much marketing help a business likely needs (0-10).
 
@@ -65,8 +110,15 @@ def compute_gaps(row: dict, place: dict | None = None) -> tuple[int, str]:
     """
     place = place or {}
     gaps, score = [], 0
-    if not row.get("website"):
+    status = row.get("website_status") or website_status(row.get("website"))
+    if status == "none":
         gaps.append("no website")
+        score += 3
+    elif status == "social-only":
+        gaps.append("social page only")
+        score += 3
+    elif status == "booking-only":
+        gaps.append("booking link only")
         score += 3
     if place.get("claimed") is False:
         gaps.append("unclaimed GBP")
@@ -74,14 +126,11 @@ def compute_gaps(row: dict, place: dict | None = None) -> tuple[int, str]:
     if not row.get("instagram"):
         gaps.append("no Instagram")
         score += 2
-    if row.get("website") and (place.get("has_fb_pixel") is False
-                               and place.get("has_google_tag") is False):
+    if status == "real" and (place.get("has_fb_pixel") is False
+                             and place.get("has_google_tag") is False):
         gaps.append("no ad tracking")
         score += 1
-    try:
-        revs = int(row.get("reviews") or 0)
-    except (TypeError, ValueError):
-        revs = 0
+    revs = as_int(row.get("reviews"))
     if revs < 50:
         gaps.append("few reviews")
         score += 1
@@ -103,20 +152,27 @@ def draft_message(row: dict) -> str:
     biz = (row.get("business_name") or "").strip()
     city = (row.get("city") or "").strip()
     cat_plural = _plural(row.get("category") or "local business")
-    try:
-        rating = float(row.get("rating") or 0)
-    except (TypeError, ValueError):
-        rating = 0.0
-    try:
-        revs = int(row.get("reviews") or 0)
-    except (TypeError, ValueError):
-        revs = 0
+    rating = as_float(row.get("rating"))
+    revs = as_int(row.get("reviews"))
 
     loc = f" in {city}" if city else ""
     gaps = row.get("gaps") or ""
 
     # Pitch the gap, not a generic line. Priority: website > GBP > social.
-    if "no website" in gaps:
+    status = row.get("website_status") or ""
+    if status == "booking-only":
+        hook = (f"I came across {biz}{loc} — you're sending people straight "
+                f"to a booking link with no real front door.")
+        pitch = (f"I build simple sites for {cat_plural} that give that "
+                 f"booking button somewhere to live — mind if I share a "
+                 f"quick idea here?")
+    elif status == "social-only":
+        hook = (f"I came across {biz}{loc} — great reviews, but a social "
+                f"page is doing all the work a website should be doing.")
+        pitch = (f"I build simple sites for {cat_plural} that turn Google "
+                 f"searches into booked appointments — mind if I share a "
+                 f"quick idea here?")
+    elif "no website" in gaps:
         hook = (f"I came across {biz}{loc} — great reviews, but I noticed "
                 f"people can't book or browse you online yet.")
         pitch = (f"I build simple sites for {cat_plural} that turn Google "
@@ -154,25 +210,39 @@ def score_lead(row: dict, dm_channels: list[str]) -> str:
     return "Needs research"
 
 
-def _sort_key(row: dict):
-    """Sellability first: opportunity (gaps) desc, then social proof desc.
+TIER_ORDER = {"A": 0, "B": 1, "C": 2, "D": 3}
 
-    A business with fixable gaps is a better prospect than one that's
-    already winning; among equals, the more-established one goes first.
+
+def as_int(v) -> int:
+    """Coerce to int, tolerating floats and float-ish strings ('171.0').
+
+    Ledger CSVs round-trip numbers as strings, so int('171.0') would raise
+    and silently zero out a lead's review count — which would mis-tier it.
     """
     try:
-        opp = int(row.get("opportunity") or 0)
+        return int(float(v))
     except (TypeError, ValueError):
-        opp = 0
+        return 0
+
+
+def as_float(v) -> float:
     try:
-        rating = float(row.get("rating") or 0)
+        return float(v)
     except (TypeError, ValueError):
-        rating = 0.0
-    try:
-        revs = int(row.get("reviews") or 0)
-    except (TypeError, ValueError):
-        revs = 0
-    return (-opp, -(rating * min(revs, 500)))
+        return 0.0
+
+
+def _sort_key(row: dict):
+    """Tier A->D, then opportunity, then social proof — all descending value.
+
+    Tier A (no real site + 30+ reviews) is proven, busy, and invisible: the
+    easiest close. Among equals, the more-established business goes first.
+    """
+    tier = TIER_ORDER.get(row.get("tier") or "D", 3)
+    opp = as_int(row.get("opportunity"))
+    rating = as_float(row.get("rating"))
+    revs = as_int(row.get("reviews"))
+    return (tier, -opp, -(rating * min(revs, 500)))
 
 
 def build_rows(places: list[dict], contacts: list[dict], cfg: dict) -> list[dict]:

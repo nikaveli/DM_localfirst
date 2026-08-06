@@ -92,10 +92,15 @@ def main():
     path = store.master_path(slug)
     master = store.load_master(path)
     all_rows, added = store.merge(master, batch)
-    # Backfill older ledger rows that predate the gap/draft columns.
+    # Backfill ledger rows that predate newer columns (tier, status, drafts).
     for r in all_rows:
         if not r.get("business_name"):
             continue
+        if not r.get("website_status"):
+            r["website_status"] = build_sheet.website_status(r.get("website"))
+        if not r.get("tier"):
+            r["tier"] = build_sheet.pitch_tier(
+                r["website_status"], build_sheet.as_int(r.get("reviews")))
         if not r.get("gaps") and not r.get("opportunity"):
             r["opportunity"], r["gaps"] = build_sheet.compute_gaps(r)
             r["dm_draft"] = build_sheet.draft_message(r)

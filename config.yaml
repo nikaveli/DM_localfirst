@@ -7,6 +7,9 @@ scrape:
   max_places: 100            # per niche/search term
   # --- Outscraper (default) ---
   outscraper_enrichment: true  # domains_service: email + socials + owner in one call
+  proximity_search: true     # search "<niche> near <zip>" per zip code, not city-wide.
+                             # Surfaces invisible businesses a ranked city search hides.
+  max_zips: 20               # cap zips per run (big metros have many)
   # --- Apify (alternative) ---
   actor: "compass/crawler-google-places"
   website_filter: "allPlaces"  # allPlaces | withWebsite | withoutWebsite
